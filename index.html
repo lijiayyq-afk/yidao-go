@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>弈道 - 围棋智能学习与死活题解析平台</title>
+    <link rel="stylesheet" href="style.css">
+    <!-- 引入Google Fonts中的雅致字体 -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@300;400;600;900&family=Outfit:wght@300;400;500;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <!-- 水墨风背景晕染效果 -->
+    <div class="ink-bg-overlay"></div>
+    <div class="ink-bg-blot"></div>
+
+    <div class="app-container">
+        <!-- 头部导航栏 -->
+        <header class="app-header">
+            <div class="logo">
+                <span class="logo-icon">☯</span>
+                <h1>弈道 <small>死活棋冲关</small></h1>
+            </div>
+            <div class="mode-selector">
+                <button class="mode-btn" data-mode="tutorial" id="btn-tutorial">规则教学</button>
+                <button class="mode-btn active" data-mode="tsumego" id="btn-tsumego">死活闯关</button>
+                <button class="mode-btn" data-mode="import" id="btn-import">棋谱导入</button>
+                <button class="mode-btn" data-mode="sandbox" id="btn-sandbox">自由沙盒</button>
+            </div>
+        </header>
+
+        <!-- 主体双栏布局 -->
+        <main class="app-main">
+            <!-- 左侧：棋盘区域 -->
+            <section class="board-section">
+                <div class="board-wrapper">
+                    <!-- 立体阴影和木纹棋盘的外框 -->
+                    <div class="go-board-wood">
+                        <canvas id="go-board"></canvas>
+                        <!-- 动态水墨涟漪 Canvas -->
+                        <canvas id="ink-effect-board"></canvas>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 右侧：控制面板与信息展示 -->
+            <section class="panel-section">
+                <!-- 1. 规则教学子面板 -->
+                <div class="sub-panel" id="panel-tutorial">
+                    <h2>围棋规则互动教学</h2>
+                    <p class="section-desc">通过简单的交互式关卡，快速了解围棋的核心逻辑与术语。</p>
+                    <div class="level-list">
+                        <button class="level-item active" data-level="1">第一关：气的概念</button>
+                        <button class="level-item" data-level="2">第二关：吃子与提子</button>
+                        <button class="level-item" data-level="3">第三关：自杀与禁着点</button>
+                        <button class="level-item" data-level="4">第四关：劫争与打劫</button>
+                        <button class="level-item" data-level="5">第五关：眼与死活判定</button>
+                    </div>
+                </div>
+
+                <!-- 2. 死活闯关子面板 -->
+                <div class="sub-panel active" id="panel-tsumego">
+                    <h2>内置死活题挑战</h2>
+                    <p class="section-desc">精选传统死活题，测试并锻炼您的“手筋”技巧。电脑将针对您的落子进行智能化应手。</p>
+                    
+                    <!-- 水墨风进度展示条 -->
+                    <div class="tsumego-progress-container">
+                        <div class="progress-info">
+                            <span>闯关进度：<strong id="tsumego-progress-text">0/700 (0.0%)</strong></span>
+                        </div>
+                        <div class="progress-track">
+                            <div class="progress-bar" id="tsumego-progress-bar" style="width: 0%;"></div>
+                        </div>
+                    </div>
+
+                    <div class="problem-difficulty-tabs">
+                        <button class="diff-tab active" data-diff="easy">入门吃子</button>
+                        <button class="diff-tab" data-diff="medium">初级死活</button>
+                        <button class="diff-tab" data-diff="hard">手筋进阶</button>
+                    </div>
+
+                    <!-- 状态筛选与搜索跳转 -->
+                    <div class="tsumego-filter-bar">
+                        <div class="filter-buttons">
+                            <button class="filter-btn active" data-filter="all">全部</button>
+                            <button class="filter-btn" data-filter="unstarted">未做</button>
+                            <button class="filter-btn" data-filter="completed">已过</button>
+                        </div>
+                        <div class="jump-box">
+                            <input type="number" id="tsumego-jump-input" min="1" placeholder="输入题号">
+                            <button id="tsumego-jump-btn">跳转</button>
+                        </div>
+                    </div>
+
+                    <!-- 当前题目展示看板 -->
+                    <div class="current-problem-card" id="current-problem-title">
+                        当前挑战：加载中...
+                    </div>
+
+                    <div class="problem-list" id="problem-list-container">
+                        <!-- 动态渲染题目项 -->
+                    </div>
+
+                    <!-- 分页导航器 -->
+                    <div class="tsumego-pagination-bar" id="tsumego-pagination">
+                        <!-- 动态渲染分页 -->
+                    </div>
+                </div>
+
+                <!-- 3. 棋谱导入子面板 -->
+                <div class="sub-panel" id="panel-import">
+                    <h2>导入 GitHub/外部 SGF 棋谱</h2>
+                    <p class="section-desc">粘贴 SGF 格式的代码，或上传包含分支树的 `.sgf` 文件，系统将自动加载棋局并提供决策匹配检验及解析提示。</p>
+                    
+                    <div class="import-area">
+                        <textarea id="sgf-textarea" placeholder="在此粘贴 SGF 棋谱内容...&#10;例如：(;SZ[19]AB[pd][dp]AW[dd][pp]C[黑先。]...)"></textarea>
+                        
+                        <div class="import-actions">
+                            <label class="file-upload-btn">
+                                <span>选择 .sgf 文件</span>
+                                <input type="file" id="sgf-file-input" accept=".sgf">
+                            </label>
+                            <button class="primary-btn" id="btn-load-sgf">解析并载入</button>
+                        </div>
+                    </div>
+
+                    <div class="parsed-info-card" id="parsed-info" style="display: none;">
+                        <h3>棋谱信息</h3>
+                        <div class="info-grid">
+                            <div><span>棋盘大小：</span><strong id="info-size">-</strong></div>
+                            <div><span>先手：</span><strong id="info-player">-</strong></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 4. 自由沙盒子面板 -->
+                <div class="sub-panel" id="panel-sandbox">
+                    <h2>自由对弈与沙盒测试</h2>
+                    <p class="section-desc">自由落子，随意测试局部变化。支持切换落子颜色，动态显示棋子气数。</p>
+                    <div class="sandbox-tools">
+                        <div class="tool-group">
+                            <span class="tool-label">落子颜色：</span>
+                            <div class="radio-buttons">
+                                <label class="radio-label">
+                                    <input type="radio" name="sandbox-color" value="alternate" checked>
+                                    <span>黑白交替</span>
+                                </label>
+                                <label class="radio-label">
+                                    <input type="radio" name="sandbox-color" value="black">
+                                    <span>只落黑子</span>
+                                </label>
+                                <label class="radio-label">
+                                    <input type="radio" name="sandbox-color" value="white">
+                                    <span>只落白子</span>
+                                </label>
+                            </div>
+                        </div>
+                        <div class="tool-group toggle-tool">
+                            <label class="switch-container">
+                                <input type="checkbox" id="toggle-liberty-number" checked>
+                                <span class="slider"></span>
+                            </label>
+                            <span class="switch-label">在棋子上显示该子气数</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 共享评论/解析展示模块 (极其精美的水墨风格卡片) -->
+                <div class="explanation-card">
+                    <div class="ink-card-header">
+                        <span class="ink-card-badge" id="info-badge">规则说明</span>
+                        <div class="turn-indicator" id="turn-indicator">
+                            <span class="indicator-dot black"></span>
+                            <span id="turn-text">黑先</span>
+                        </div>
+                    </div>
+                    <div class="ink-card-body">
+                        <p id="explanation-text">欢迎来到规则教学！请在右侧选择关卡，并根据提示在棋盘上落子。</p>
+                    </div>
+                </div>
+
+                <!-- 操作控制区 -->
+                <div class="action-bar">
+                    <button class="control-btn" id="btn-reset" title="重新开始当前关卡">
+                        <span class="icon">↺</span> 重新开始
+                    </button>
+                    <button class="control-btn" id="btn-undo" title="撤回上一步落子">
+                        <span class="icon">↶</span> 悔棋
+                    </button>
+                    <button class="control-btn" id="btn-show-solution" title="显示正确走法分支">
+                        <span class="icon">👁</span> 查看解析
+                    </button>
+                    <button class="control-btn" id="btn-auto-play" title="自动演示正解步骤" style="display: none;">
+                        <span class="icon">▶</span> 自动演示
+                    </button>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- 弹窗提示：关卡成功/失败 -->
+    <div class="modal-overlay" id="status-modal">
+        <div class="modal-content">
+            <div class="modal-icon" id="modal-status-icon">☯</div>
+            <h2 id="modal-title">挑战成功</h2>
+            <p id="modal-message">妙手！黑棋两眼活棋。</p>
+            <div class="modal-actions">
+                <button class="primary-btn" id="modal-btn-next">进入下一关</button>
+                <button class="secondary-btn" id="modal-btn-close">返回重试</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 棋谱导入/解析的核心脚本 -->
+    <script src="sgfParser.js"></script>
+    <script src="rules.js"></script>
+    <script src="problems.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
