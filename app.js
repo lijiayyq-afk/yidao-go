@@ -1427,9 +1427,7 @@ class GoApp {
         const size = this.canvasSize;
         const boardSize = this.rules.boardSize;
         const vp = this.viewport || { minX: 0, maxX: boardSize - 1, minY: 0, maxY: boardSize - 1, size: boardSize };
-        const pad = size * 0.05; // 边距
-        const gridWidth = size - 2 * pad;
-        const step = gridWidth / (vp.size - 1);
+        const { pad, step } = this.getBoardLayout(size, vp.size);
         
         // 寻找最近的交叉点 (相对视口的格点)
         const rx = Math.round((mouseX - pad) / step);
@@ -1477,9 +1475,7 @@ class GoApp {
         const size = this.canvasSize;
         const boardSize = this.rules.boardSize;
         const vp = this.viewport || { minX: 0, maxX: boardSize - 1, minY: 0, maxY: boardSize - 1, size: boardSize };
-        const pad = size * 0.05;
-        const gridWidth = size - 2 * pad;
-        const step = gridWidth / (vp.size - 1);
+        const { pad, step } = this.getBoardLayout(size, vp.size);
         
         const rx = Math.round((mouseX - pad) / step);
         const ry = Math.round((mouseY - pad) / step);
@@ -1760,7 +1756,7 @@ class GoApp {
                 }
                 setTimeout(() => {
                     this.showStatusModal(true, "挑战成功！", comment || "恭喜您，解出了最佳活路手筋！");
-                }, 2500); // 增加延迟到 2.5 秒，留出复盘看型的时间
+                }, 1000); // 延迟 1 秒，留出复盘看型的时间
             } else {
                 setTimeout(() => {
                     this.showStatusModal(false, "挑战失败", comment || "黑棋行棋不当，已被对方杀死，或未达到净活/净杀效果。请撤回或重新开始。");
@@ -2163,6 +2159,23 @@ class GoApp {
     /* ==========================================================================
        Canvas 绘图与水墨动效系统
        ========================================================================== */
+    /**
+     * 智能计算棋盘的 pad, step, rad，支持在视口极小时自适应调大边距 pad，防止边缘棋子被 Canvas 边缘截断
+     */
+    getBoardLayout(size, vpSize) {
+        const safeVpSize = Math.max(2, vpSize);
+        let pad = size * 0.05;
+        let step = (size - 2 * pad) / (safeVpSize - 1);
+        const rad = step * 0.47;
+        const textSize = Math.max(12, size * 0.024) * 0.8;
+        const minRequiredPad = rad + textSize;
+        if (pad < minRequiredPad) {
+            step = (size - 2 * textSize) / (safeVpSize - 1 + 0.94);
+            pad = step * 0.47 + textSize;
+        }
+        return { pad, step, rad };
+    }
+
     drawBoard() {
         const ctx = this.boardCtx;
         const size = this.canvasSize;
@@ -2170,9 +2183,8 @@ class GoApp {
 
         const boardSize = this.rules.boardSize;
         const vp = this.viewport || { minX: 0, maxX: boardSize - 1, minY: 0, maxY: boardSize - 1, size: boardSize };
-        const pad = size * 0.05; // 边距
+        const { pad, step, rad } = this.getBoardLayout(size, vp.size);
         const gridWidth = size - 2 * pad;
-        const step = gridWidth / (vp.size - 1);
 
         // 1. 绘制网格线
         ctx.lineWidth = 1;
@@ -2238,7 +2250,6 @@ class GoApp {
         }
 
         // 4. 绘制棋子
-        const rad = step * 0.47; // 棋子半径略微小于格子的一半
         for (let y = vp.minY; y <= vp.maxY; y++) {
             for (let x = vp.minX; x <= vp.maxX; x++) {
                 const color = this.rules.board[y][x];
@@ -2443,8 +2454,7 @@ class GoApp {
     triggerInkRipple(gridX, gridY, isWarning = false) {
         const boardSize = this.rules.boardSize;
         const vp = this.viewport || { minX: 0, maxX: boardSize - 1, minY: 0, maxY: boardSize - 1, size: boardSize };
-        const pad = this.canvasSize * 0.05;
-        const step = (this.canvasSize - 2 * pad) / (vp.size - 1);
+        const { pad, step } = this.getBoardLayout(this.canvasSize, vp.size);
         
         // 只有落子点在视口内时，才在此处产生水墨波纹
         if (gridX >= vp.minX && gridX <= vp.maxX && gridY >= vp.minY && gridY <= vp.maxY) {
