@@ -67,6 +67,8 @@ class GoApp {
         
         // 绑定事件与初始化
         this.computerMoveTimeout = null;
+        this.isAnalysisMode = false;
+        this.analysisSnapshot = null;
         this.initEvents();
         this.resizeBoard();
         this.switchMode('tsumego');
@@ -286,6 +288,7 @@ class GoApp {
         document.getElementById('btn-undo').addEventListener('click', () => this.undoLastMove());
         document.getElementById('btn-show-solution').addEventListener('click', () => this.toggleSolutionLabels());
         document.getElementById('btn-auto-play').addEventListener('click', () => this.autoPlaySolution());
+        document.getElementById('btn-analysis').addEventListener('click', () => this.toggleAnalysisMode());
 
         // 弹窗控制
         document.getElementById('modal-btn-close').addEventListener('click', () => {
@@ -439,6 +442,7 @@ class GoApp {
         this.currentMode = mode;
         this.stopSolutionPlayback();
         this.clearComputerTimeout();
+        this.resetAnalysisState();
         this.showSolutionLabels = false;
         
         // 更新导航状态
@@ -453,12 +457,15 @@ class GoApp {
         });
         document.getElementById(`panel-${mode}`).classList.add('active');
 
-        // 隐藏/显示自动演示按钮
+        // 隐藏/显示自动演示与个人推演按钮
         const autoPlayBtn = document.getElementById('btn-auto-play');
+        const analysisBtn = document.getElementById('btn-analysis');
         if (mode === 'tsumego' || mode === 'import') {
             autoPlayBtn.style.display = 'flex';
+            if (analysisBtn) analysisBtn.style.display = 'flex';
         } else {
             autoPlayBtn.style.display = 'none';
+            if (analysisBtn) analysisBtn.style.display = 'none';
         }
 
         // 清理高亮和悬停点
@@ -818,6 +825,7 @@ class GoApp {
         this.currentProblem = problem;
         this.stopSolutionPlayback();
         this.clearComputerTimeout();
+        this.resetAnalysisState();
         this.showSolutionLabels = false;
         
         // 记录并保存上一次练习进度
@@ -1342,6 +1350,27 @@ class GoApp {
 
         // 3. 死活题 / 导入棋谱模式
         if (this.currentMode === 'tsumego' || this.currentMode === 'import') {
+            if (this.isAnalysisMode) {
+                // 如果是个人推演模式，走自由落子推演逻辑 (类似于沙盒，黑白交替)
+                this.saveHistory();
+                const caps = this.rules.playMove(x, y, this.currentTurn);
+                if (caps !== null) {
+                    this.playStoneSound();
+                    this.triggerInkRipple(x, y);
+                    this.onSuccessfulMove(x, y, caps);
+                    
+                    // 切换交替回合
+                    this.currentTurn = this.currentTurn === 'black' ? 'white' : 'black';
+                    this.setExplanation(`<strong>【个人推演中】</strong> 成功落子于 ${this.coordName(x, y)}。${caps.length > 0 ? `提起对方共 <strong>${caps.length}</strong> 子。` : ''}`);
+                    this.updateTurnIndicator();
+                    this.drawBoard();
+                } else {
+                    this.setExplanation("禁着点，无法落子！", "warning");
+                    this.historyStack.pop();
+                }
+                return;
+            }
+
             if (!this.sgfCurrentNode) return;
             
             const targetSgf = SgfParser.coordsToSgf(x, y);
@@ -1646,6 +1675,74 @@ class GoApp {
             this.computerMoveTimeout = null;
         }
         this.isPlayingSolution = false;
+    }
+
+    resetAnalysisState() {
+        this.isAnalysisMode = false;
+        this.analysisSnapshot = null;
+        const btn = document.getElementById('btn-analysis');
+        if (btn) {
+            btn.innerHTML = `<span class="icon">☯</span> 个人推演`;
+            btn.classList.remove('active');
+            btn.style.color = '';
+            btn.style.borderColor = '';
+        }
+    }
+
+    toggleAnalysisMode() {
+        if (this.currentMode !== 'tsumego' && this.currentMode !== 'import') return;
+        
+        this.stopSolutionPlayback();
+        this.clearComputerTimeout();
+
+        const btn = document.getElementById('btn-analysis');
+        if (!btn) return;
+
+        if (!this.isAnalysisMode) {
+            // 进入推演模式
+            this.isAnalysisMode = true;
+            
+            // 备份当前状态以供退出时还原
+            this.analysisSnapshot = {
+                board: this.rules.cloneBoard(),
+                koPoint: this.rules.koPoint ? { ...this.rules.koPoint } : null,
+                sgfNode: this.sgfCurrentNode,
+                turn: this.currentTurn,
+                moveNumbers: this.moveNumbers ? this.moveNumbers.map(row => [...row]) : null,
+                stepCount: this.currentStepCount,
+                explanation: document.getElementById('explanation-text').innerHTML
+            };
+
+            // UI 状态改变
+            btn.innerHTML = `<span class="icon">✕</span> 退出推演`;
+            btn.classList.add('active');
+            btn.style.color = 'var(--cinnabar)';
+            btn.style.borderColor = 'var(--cinnabar)';
+
+            this.setExplanation("<strong>【个人推演中】</strong> 您已进入自由推演研究模式。电脑已暂停应子，您可以黑白交替任意落子推敲变化。点击“退出推演”可还原盘面继续做题。");
+        } else {
+            // 退出推演模式，还原状态
+            this.isAnalysisMode = false;
+            
+            if (this.analysisSnapshot) {
+                this.rules.board = this.analysisSnapshot.board;
+                this.rules.koPoint = this.analysisSnapshot.koPoint;
+                this.sgfCurrentNode = this.analysisSnapshot.sgfNode;
+                this.currentTurn = this.analysisSnapshot.turn;
+                this.moveNumbers = this.analysisSnapshot.moveNumbers;
+                this.currentStepCount = this.analysisSnapshot.stepCount;
+                this.setExplanation(this.analysisSnapshot.explanation);
+                this.analysisSnapshot = null;
+            }
+
+            btn.innerHTML = `<span class="icon">☯</span> 个人推演`;
+            btn.classList.remove('active');
+            btn.style.color = '';
+            btn.style.borderColor = '';
+        }
+        
+        this.updateTurnIndicator();
+        this.drawBoard();
     }
 
     /**
