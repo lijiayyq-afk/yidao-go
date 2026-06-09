@@ -69,6 +69,7 @@ class GoApp {
         this.computerMoveTimeout = null;
         this.isAnalysisMode = false;
         this.analysisSnapshot = null;
+        this.viewport = null; // 初始化自适应局部放大视口
         this.initEvents();
         this.resizeBoard();
         this.switchMode('tsumego');
@@ -293,9 +294,32 @@ class GoApp {
         // 弹窗控制
         document.getElementById('modal-btn-close').addEventListener('click', () => {
             document.getElementById('status-modal').classList.remove('active');
-            // 如果是在死活、导入或教学模式下做错了，点击重试自动重置题目
             if (this.currentMode === 'tsumego' || this.currentMode === 'import' || this.currentMode === 'tutorial') {
-                this.resetCurrentStage();
+                if (!this.modalIsSuccess) {
+                    // 只有在挑战失败时，关闭弹窗才自动重置题目
+                    this.resetCurrentStage();
+                } else {
+                    // 挑战成功后，关闭弹窗进入“复盘分析”状态，不重置棋局，自动进入“个人推演”模式
+                    this.isAnalysisMode = true;
+                    this.analysisSnapshot = {
+                        board: this.rules.cloneBoard(),
+                        koPoint: this.rules.koPoint ? { ...this.rules.koPoint } : null,
+                        sgfNode: this.sgfCurrentNode,
+                        turn: this.currentTurn,
+                        moveNumbers: this.moveNumbers ? this.moveNumbers.map(row => [...row]) : null,
+                        stepCount: this.currentStepCount,
+                        explanation: "<strong>【复盘分析中】</strong> 挑战已成功！已自动开启个人推演模式，您可以任意摆子推算后续变化。"
+                    };
+                    const analysisBtn = document.getElementById('btn-analysis');
+                    if (analysisBtn) {
+                        analysisBtn.innerHTML = `<span class="icon">✕</span> 退出推演`;
+                        analysisBtn.classList.add('active');
+                        analysisBtn.style.color = 'var(--cinnabar)';
+                        analysisBtn.style.borderColor = 'var(--cinnabar)';
+                    }
+                    this.setExplanation("<strong>【复盘分析中】</strong> 挑战已成功！已自动开启个人推演模式，您可以任意摆子推算后续变化。");
+                    this.drawBoard();
+                }
             }
         });
         document.getElementById('modal-btn-next').addEventListener('click', () => {
@@ -460,6 +484,7 @@ class GoApp {
         this.clearComputerTimeout();
         this.resetAnalysisState();
         this.showSolutionLabels = false;
+        this.viewport = null; // 切换模式时重置视口
         
         // 更新导航状态
         document.querySelectorAll('.mode-btn').forEach(btn => {
@@ -866,6 +891,9 @@ class GoApp {
         // 还原初始子 AB (Add Black) 和 AW (Add White)
         this.setupInitialStones(root);
 
+        // 计算局部放大视口
+        this.calculateViewport();
+
         // 获取首个落子节点以判定先手
         this.determineFirstPlayer(root);
 
@@ -964,43 +992,189 @@ class GoApp {
     }
 
     /**
-     * 智能推断死活题类型：做活、净杀、吃子、双活等
+     * 递归收集该 SGF 解法树中所有节点的 C 属性评论
+     */
+    getAllComments(node) {
+        let comments = [];
+        if (node.properties && node.properties.C) {
+            comments.push(node.properties.C);
+        }
+        if (node.children) {
+            for (const child of node.children) {
+                comments = comments.concat(this.getAllComments(child));
+            }
+        }
+        return comments;
+    }
+
+    /**
+     * 智能推断死活题类型：做活、净杀、吃子、双活等 (采用多重权重打分法，并对整棵 SGF 分支树的所有 C 属性大打分，比单节点正则精准得多)
      */
     inferProblemTask(rootNode) {
         if (!rootNode) return "黑先";
         
-        const comment = (rootNode.properties.C || "").toLowerCase();
+        const comments = this.getAllComments(rootNode);
+        const commentText = comments.join("\n").toLowerCase();
         
-        const hasLive = /live|alive|活|眼|make eye/i.test(comment);
-        const hasKill = /kill|capture|dead|die|escapes|杀|死|吃|提/i.test(comment);
-        const hasKo = /ko|劫/i.test(comment);
-        const hasSeki = /seki|双活/i.test(comment);
+        let liveScore = 0;
+        let killScore = 0;
 
-        if (hasKo) {
-            if (hasKill) return "黑先劫杀";
-            return "黑先劫活";
-        }
-        if (hasSeki) {
-            return "黑先双活";
-        }
-        if (hasKill) {
-            if (/capture|吃|捕/i.test(comment)) return "黑先吃子";
-            return "黑先净杀";
-        }
-        if (hasLive) {
-            return "黑先做活";
-        }
+        // 做活词频权重
+        const liveKeywords = [
+            { r: /black (is )?alive/g, w: 5 },
+            { r: /black (is )?dead/g, w: 4 }, // 黑棋死了，说明任务是让黑棋活
+            { r: /black dies/g, w: 4 },
+            { r: /make life/g, w: 4 },
+            { r: /make two eyes/g, w: 4 },
+            { r: /live|alive|make life|make eye|seki|活|双活|做活|存活/g, w: 3 },
+            { r: /save|rescue|survive|connect|救|连|逃|防|连接/g, w: 2 },
+            { r: /prevent|prevent white|防止|避免/g, w: 1.5 }
+        ];
 
-        // 兜底推断
+        // 杀棋词频权重
+        const killKeywords = [
+            { r: /white (is )?dead/g, w: 5 },
+            { r: /white dies/g, w: 5 },
+            { r: /white escapes/g, w: 5 }, // 白棋逃跑，说明任务是阻止白棋逃跑或杀白
+            { r: /kill white/g, w: 5 },
+            { r: /kill the white/g, w: 5 },
+            { r: /kill|dead|die|destroy|破眼|杀|死/g, w: 3 },
+            { r: /capture|capture the|capture white|capture these|吃子|提|捕|提子/g, w: 2.5 },
+            { r: /capturing race|对杀|攻杀/g, w: 2 },
+            { r: /cut|cutting|切断|断/g, w: 1.5 }
+        ];
+
+        liveKeywords.forEach(k => {
+            const matches = commentText.match(k.r);
+            if (matches) liveScore += matches.length * k.w;
+        });
+
+        killKeywords.forEach(k => {
+            const matches = commentText.match(k.r);
+            if (matches) killScore += matches.length * k.w;
+        });
+
+        const hasKo = /ko|劫/i.test(commentText);
+        let isKill = killScore > liveScore;
+        
+        // 结合分类与题目内容进行微调
         if (this.currentProblem) {
             if (this.currentProblem.difficulty === 'easy') {
                 return "黑先吃子";
             }
-            if (comment.includes("杀") || comment.includes("破")) return "黑先净杀";
-            if (comment.includes("活")) return "黑先做活";
+        }
+
+        if (hasKo) {
+            if (isKill) return "黑先劫杀";
+            return "黑先劫活";
+        }
+        if (/seki|双活/i.test(commentText)) {
+            return "黑先双活";
+        }
+
+        if (isKill) {
+            if (/capture|吃|捕/i.test(commentText)) return "黑先吃子";
+            return "黑先净杀";
+        }
+        
+        if (liveScore === 0 && killScore === 0) {
+            if (this.currentProblem && this.currentProblem.difficulty === 'hard') {
+                return "黑先手筋";
+            }
+            return "黑先做活";
         }
 
         return "黑先做活";
+    }
+
+    /**
+     * 自动扫描棋盘上的初始棋子，计算适合裁剪放大的局部正方形视口范围
+     */
+    calculateViewport() {
+        if (!this.rules || !this.currentProblem) {
+            this.viewport = null;
+            return;
+        }
+
+        const boardSize = this.rules.boardSize;
+        let minX = boardSize, maxX = -1, minY = boardSize, maxY = -1;
+        let hasStones = false;
+
+        // 扫描整个棋盘，找出有子的地方
+        for (let y = 0; y < boardSize; y++) {
+            for (let x = 0; x < boardSize; x++) {
+                if (this.rules.board[y][x] !== null) {
+                    hasStones = true;
+                    if (x < minX) minX = x;
+                    if (x > maxX) maxX = x;
+                    if (y < minY) minY = y;
+                    if (y > maxY) maxY = y;
+                }
+            }
+        }
+
+        // 如果没有子，使用完整棋盘
+        if (!hasStones) {
+            this.viewport = null;
+            return;
+        }
+
+        // 向外扩展 2 格 (Padding) 留出研究空间
+        const pad = 2;
+        let vpMinX = Math.max(0, minX - pad);
+        let vpMaxX = Math.min(boardSize - 1, maxX + pad);
+        let vpMinY = Math.max(0, minY - pad);
+        let vpMaxY = Math.min(boardSize - 1, maxY + pad);
+
+        // 强行调整为正方形
+        let vpW = vpMaxX - vpMinX;
+        let vpH = vpMaxY - vpMinY;
+        let vpSize = Math.max(vpW, vpH);
+
+        // 如果视口已经很大了（比如占了棋盘一大半以上），直接展示全盘更合适
+        if (vpSize >= boardSize - 5) {
+            this.viewport = null;
+            return;
+        }
+
+        // 扩充宽度
+        if (vpW < vpSize) {
+            const diff = vpSize - vpW;
+            const left = Math.floor(diff / 2);
+            const right = diff - left;
+            vpMinX = Math.max(0, vpMinX - left);
+            vpMaxX = Math.min(boardSize - 1, vpMaxX + right);
+            // 二次校正
+            if (vpMaxX - vpMinX < vpSize) {
+                if (vpMinX === 0) vpMaxX = Math.min(boardSize - 1, vpMinX + vpSize);
+                else if (vpMaxX === boardSize - 1) vpMinX = Math.max(0, vpMaxX - vpSize);
+            }
+        }
+        // 扩充高度
+        if (vpH < vpSize) {
+            const diff = vpSize - vpH;
+            const top = Math.floor(diff / 2);
+            const bottom = diff - top;
+            vpMinY = Math.max(0, vpMinY - top);
+            vpMaxY = Math.min(boardSize - 1, vpMaxY + bottom);
+            // 二次校正
+            if (vpMaxY - vpMinY < vpSize) {
+                if (vpMinY === 0) vpMaxY = Math.min(boardSize - 1, vpMinY + vpSize);
+                else if (vpMaxY === boardSize - 1) vpMinY = Math.max(0, vpMaxY - vpSize);
+            }
+        }
+
+        const finalW = vpMaxX - vpMinX;
+        const finalH = vpMaxY - vpMinY;
+        const finalSize = Math.max(finalW, finalH);
+
+        this.viewport = {
+            minX: vpMinX,
+            maxX: vpMaxX,
+            minY: vpMinY,
+            maxY: vpMaxY,
+            size: finalSize + 1
+        };
     }
 
     nextTsumegoProblem() {
@@ -1068,6 +1242,7 @@ class GoApp {
         const sz = parseInt(root.properties.SZ || 19);
         this.rules.reset(sz);
         this.setupInitialStones(root);
+        this.calculateViewport();
         this.determineFirstPlayer(root);
 
         // 界面显示
@@ -1250,15 +1425,20 @@ class GoApp {
         
         // 棋盘格点间距
         const size = this.canvasSize;
+        const boardSize = this.rules.boardSize;
+        const vp = this.viewport || { minX: 0, maxX: boardSize - 1, minY: 0, maxY: boardSize - 1, size: boardSize };
         const pad = size * 0.05; // 边距
         const gridWidth = size - 2 * pad;
-        const step = gridWidth / (this.rules.boardSize - 1);
+        const step = gridWidth / (vp.size - 1);
         
-        // 寻找最近的交叉点
-        const x = Math.round((mouseX - pad) / step);
-        const y = Math.round((mouseY - pad) / step);
+        // 寻找最近的交叉点 (相对视口的格点)
+        const rx = Math.round((mouseX - pad) / step);
+        const ry = Math.round((mouseY - pad) / step);
         
-        if (x >= 0 && x < this.rules.boardSize && y >= 0 && y < this.rules.boardSize) {
+        if (rx >= 0 && rx < vp.size && ry >= 0 && ry < vp.size) {
+            const x = rx + vp.minX;
+            const y = ry + vp.minY;
+            
             // 如果悬停交叉点有变化才重绘
             if (!this.hoverPoint || this.hoverPoint.x !== x || this.hoverPoint.y !== y) {
                 this.hoverPoint = { x, y };
@@ -1295,12 +1475,18 @@ class GoApp {
         const mouseY = e.clientY - rect.top;
         
         const size = this.canvasSize;
+        const boardSize = this.rules.boardSize;
+        const vp = this.viewport || { minX: 0, maxX: boardSize - 1, minY: 0, maxY: boardSize - 1, size: boardSize };
         const pad = size * 0.05;
         const gridWidth = size - 2 * pad;
-        const step = gridWidth / (this.rules.boardSize - 1);
+        const step = gridWidth / (vp.size - 1);
         
-        const x = Math.round((mouseX - pad) / step);
-        const y = Math.round((mouseY - pad) / step);
+        const rx = Math.round((mouseX - pad) / step);
+        const ry = Math.round((mouseY - pad) / step);
+        
+        if (rx < 0 || rx >= vp.size || ry < 0 || ry >= vp.size) return;
+        const x = rx + vp.minX;
+        const y = ry + vp.minY;
         
         if (!this.rules.isOnBoard(x, y)) return;
         if (this.rules.board[y][x] !== null) return;
@@ -1574,11 +1760,11 @@ class GoApp {
                 }
                 setTimeout(() => {
                     this.showStatusModal(true, "挑战成功！", comment || "恭喜您，解出了最佳活路手筋！");
-                }, 800);
+                }, 2500); // 增加延迟到 2.5 秒，留出复盘看型的时间
             } else {
                 setTimeout(() => {
                     this.showStatusModal(false, "挑战失败", comment || "黑棋行棋不当，已被对方杀死，或未达到净活/净杀效果。请撤回或重新开始。");
-                }, 800);
+                }, 1000); // 失败也延迟 1 秒
             }
         }
     }
@@ -1587,10 +1773,13 @@ class GoApp {
      * 弹窗渲染
      */
     showStatusModal(isSuccess, title, message, nextCallback = null) {
+        this.modalIsSuccess = isSuccess; // 记录弹窗状态以供关闭时做不同决策
+        
         const modal = document.getElementById('status-modal');
         const titleEl = document.getElementById('modal-title');
         const msgEl = document.getElementById('modal-message');
         const nextBtn = document.getElementById('modal-btn-next');
+        const closeBtn = document.getElementById('modal-btn-close');
         const iconEl = document.getElementById('modal-status-icon');
 
         titleEl.innerText = title;
@@ -1601,10 +1790,12 @@ class GoApp {
             iconEl.style.color = "var(--cinnabar)";
             nextBtn.style.display = "block";
             nextBtn.innerText = this.currentMode === 'tutorial' ? "进入下一关" : "下一道题";
+            closeBtn.innerText = "留在棋盘复盘"; // 成功时，按钮显示为复盘
         } else {
             iconEl.innerText = "✖";
             iconEl.style.color = "var(--ink-light)";
             nextBtn.style.display = "none";
+            closeBtn.innerText = "返回重试"; // 失败时，按钮显示为重试
         }
 
         modal.classList.add('active');
@@ -1978,15 +2169,16 @@ class GoApp {
         ctx.clearRect(0, 0, size, size);
 
         const boardSize = this.rules.boardSize;
+        const vp = this.viewport || { minX: 0, maxX: boardSize - 1, minY: 0, maxY: boardSize - 1, size: boardSize };
         const pad = size * 0.05; // 边距
         const gridWidth = size - 2 * pad;
-        const step = gridWidth / (boardSize - 1);
+        const step = gridWidth / (vp.size - 1);
 
         // 1. 绘制网格线
         ctx.lineWidth = 1;
         ctx.strokeStyle = "rgba(74, 49, 24, 0.7)"; // 褐色线
 
-        for (let i = 0; i < boardSize; i++) {
+        for (let i = 0; i < vp.size; i++) {
             // 横线
             ctx.beginPath();
             ctx.moveTo(pad, pad + i * step);
@@ -2003,9 +2195,11 @@ class GoApp {
         // 2. 绘制星位 (Star points)
         ctx.fillStyle = "rgba(74, 49, 24, 0.9)";
         const drawStar = (gx, gy) => {
-            ctx.beginPath();
-            ctx.arc(pad + gx * step, pad + gy * step, size * 0.007, 0, 2 * Math.PI);
-            ctx.fill();
+            if (gx >= vp.minX && gx <= vp.maxX && gy >= vp.minY && gy <= vp.maxY) {
+                ctx.beginPath();
+                ctx.arc(pad + (gx - vp.minX) * step, pad + (gy - vp.minY) * step, size * 0.007, 0, 2 * Math.PI);
+                ctx.fill();
+            }
         };
 
         if (boardSize === 19) {
@@ -2030,24 +2224,27 @@ class GoApp {
         ctx.textBaseline = "middle";
         const labelChars = "ABCDEFGHJKLMNOPQRST";
 
-        for (let i = 0; i < boardSize; i++) {
+        for (let i = 0; i < vp.size; i++) {
+            const gridX = vp.minX + i;
+            const gridY = vp.minY + i;
+
             // 列字符 (横轴)
-            ctx.fillText(labelChars[i], pad + i * step, pad * 0.4);
-            ctx.fillText(labelChars[i], pad + i * step, size - pad * 0.4);
+            ctx.fillText(labelChars[gridX], pad + i * step, pad * 0.4);
+            ctx.fillText(labelChars[gridX], pad + i * step, size - pad * 0.4);
             
             // 行数字 (纵轴)
-            ctx.fillText((boardSize - i).toString(), pad * 0.4, pad + i * step);
-            ctx.fillText((boardSize - i).toString(), size - pad * 0.4, pad + i * step);
+            ctx.fillText((boardSize - gridY).toString(), pad * 0.4, pad + i * step);
+            ctx.fillText((boardSize - gridY).toString(), size - pad * 0.4, pad + i * step);
         }
 
         // 4. 绘制棋子
         const rad = step * 0.47; // 棋子半径略微小于格子的一半
-        for (let y = 0; y < boardSize; y++) {
-            for (let x = 0; x < boardSize; x++) {
+        for (let y = vp.minY; y <= vp.maxY; y++) {
+            for (let x = vp.minX; x <= vp.maxX; x++) {
                 const color = this.rules.board[y][x];
                 if (color) {
-                    const cx = pad + x * step;
-                    const cy = pad + y * step;
+                    const cx = pad + (x - vp.minX) * step;
+                    const cy = pad + (y - vp.minY) * step;
                     this.drawStone(ctx, cx, cy, rad, color, x, y);
                 }
             }
@@ -2056,15 +2253,17 @@ class GoApp {
         // 5. 绘制气数高亮 (教学/沙盒模式的辅助标识)
         if (this.highlightPoints && this.highlightPoints.length > 0) {
             this.highlightPoints.forEach(p => {
-                const cx = pad + p.x * step;
-                const cy = pad + p.y * step;
-                ctx.beginPath();
-                ctx.arc(cx, cy, rad * 0.4, 0, 2 * Math.PI);
-                ctx.fillStyle = "rgba(59, 130, 246, 0.4)";
-                ctx.fill();
-                ctx.lineWidth = 1.5;
-                ctx.strokeStyle = "rgba(59, 130, 246, 0.8)";
-                ctx.stroke();
+                if (p.x >= vp.minX && p.x <= vp.maxX && p.y >= vp.minY && p.y <= vp.maxY) {
+                    const cx = pad + (p.x - vp.minX) * step;
+                    const cy = pad + (p.y - vp.minY) * step;
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, rad * 0.4, 0, 2 * Math.PI);
+                    ctx.fillStyle = "rgba(59, 130, 246, 0.4)";
+                    ctx.fill();
+                    ctx.lineWidth = 1.5;
+                    ctx.strokeStyle = "rgba(59, 130, 246, 0.8)";
+                    ctx.stroke();
+                }
             });
         }
 
@@ -2102,22 +2301,24 @@ class GoApp {
                     const moveVal = isBlack ? node.properties.B : node.properties.W;
                     const coord = SgfParser.sgfToCoords(moveVal);
                     if (coord) {
-                        const cx = pad + coord.x * step;
-                        const cy = pad + coord.y * step;
-                        
-                        ctx.beginPath();
-                        ctx.arc(cx, cy, rad * 0.65, 0, 2 * Math.PI);
-                        ctx.fillStyle = "rgba(255, 255, 255, 0.85)";
-                        ctx.fill();
-                        ctx.lineWidth = 2;
-                        ctx.strokeStyle = "rgba(16, 185, 129, 0.9)";
-                        ctx.stroke();
-                        
-                        ctx.font = `bold ${rad * 0.85}px var(--font-sans)`;
-                        ctx.fillStyle = "rgba(16, 185, 129, 0.95)";
-                        ctx.textAlign = "center";
-                        ctx.textBaseline = "middle";
-                        ctx.fillText(idx.toString(), cx, cy);
+                        if (coord.x >= vp.minX && coord.x <= vp.maxX && coord.y >= vp.minY && coord.y <= vp.maxY) {
+                            const cx = pad + (coord.x - vp.minX) * step;
+                            const cy = pad + (coord.y - vp.minY) * step;
+                            
+                            ctx.beginPath();
+                            ctx.arc(cx, cy, rad * 0.65, 0, 2 * Math.PI);
+                            ctx.fillStyle = "rgba(255, 255, 255, 0.85)";
+                            ctx.fill();
+                            ctx.lineWidth = 2;
+                            ctx.strokeStyle = "rgba(16, 185, 129, 0.9)";
+                            ctx.stroke();
+                            
+                            ctx.font = `bold ${rad * 0.85}px var(--font-sans)`;
+                            ctx.fillStyle = "rgba(16, 185, 129, 0.95)";
+                            ctx.textAlign = "center";
+                            ctx.textBaseline = "middle";
+                            ctx.fillText(idx.toString(), cx, cy);
+                        }
                     }
                 }
             }
@@ -2125,37 +2326,43 @@ class GoApp {
 
         // 7. 绘制落子警告（自杀警告）
         if (this.hoverWarningPoint) {
-            const cx = pad + this.hoverWarningPoint.x * step;
-            const cy = pad + this.hoverWarningPoint.y * step;
-            ctx.beginPath();
-            ctx.arc(cx, cy, rad * 0.7, 0, 2 * Math.PI);
-            ctx.strokeStyle = "rgba(220, 38, 38, 0.85)";
-            ctx.lineWidth = 3;
-            ctx.stroke();
-            
-            // 十字警告叉
-            ctx.beginPath();
-            ctx.moveTo(cx - rad * 0.3, cy - rad * 0.3);
-            ctx.lineTo(cx + rad * 0.3, cy + rad * 0.3);
-            ctx.moveTo(cx + rad * 0.3, cy - rad * 0.3);
-            ctx.lineTo(cx - rad * 0.3, cy + rad * 0.3);
-            ctx.stroke();
+            const hwp = this.hoverWarningPoint;
+            if (hwp.x >= vp.minX && hwp.x <= vp.maxX && hwp.y >= vp.minY && hwp.y <= vp.maxY) {
+                const cx = pad + (hwp.x - vp.minX) * step;
+                const cy = pad + (hwp.y - vp.minY) * step;
+                ctx.beginPath();
+                ctx.arc(cx, cy, rad * 0.7, 0, 2 * Math.PI);
+                ctx.strokeStyle = "rgba(220, 38, 38, 0.85)";
+                ctx.lineWidth = 3;
+                ctx.stroke();
+                
+                // 十字警告叉
+                ctx.beginPath();
+                ctx.moveTo(cx - rad * 0.3, cy - rad * 0.3);
+                ctx.lineTo(cx + rad * 0.3, cy + rad * 0.3);
+                ctx.moveTo(cx + rad * 0.3, cy - rad * 0.3);
+                ctx.lineTo(cx - rad * 0.3, cy + rad * 0.3);
+                ctx.stroke();
+            }
         }
 
         // 8. 绘制半透明悬停预览子
         if (this.hoverPoint && this.rules.board[this.hoverPoint.y][this.hoverPoint.x] === null && !this.isPlayingSolution) {
-            // 确保不悬停在自杀点上
-            if (!this.hoverWarningPoint) {
-                const cx = pad + this.hoverPoint.x * step;
-                const cy = pad + this.hoverPoint.y * step;
-                ctx.save();
-                ctx.globalAlpha = 0.5;
-                let colorToDraw = this.currentTurn;
-                if (this.currentMode === 'sandbox' && this.sandboxColor !== 'alternate') {
-                    colorToDraw = this.sandboxColor;
+            const hp = this.hoverPoint;
+            if (hp.x >= vp.minX && hp.x <= vp.maxX && hp.y >= vp.minY && hp.y <= vp.maxY) {
+                // 确保不悬停在自杀点上
+                if (!this.hoverWarningPoint) {
+                    const cx = pad + (hp.x - vp.minX) * step;
+                    const cy = pad + (hp.y - vp.minY) * step;
+                    ctx.save();
+                    ctx.globalAlpha = 0.5;
+                    let colorToDraw = this.currentTurn;
+                    if (this.currentMode === 'sandbox' && this.sandboxColor !== 'alternate') {
+                        colorToDraw = this.sandboxColor;
+                    }
+                    this.drawStone(ctx, cx, cy, rad, colorToDraw, hp.x, hp.y, true);
+                    ctx.restore();
                 }
-                this.drawStone(ctx, cx, cy, rad, colorToDraw, this.hoverPoint.x, this.hoverPoint.y, true);
-                ctx.restore();
             }
         }
     }
@@ -2234,21 +2441,26 @@ class GoApp {
      * 触发落子水墨波纹
      */
     triggerInkRipple(gridX, gridY, isWarning = false) {
-        const step = (this.canvasSize - 2 * (this.canvasSize * 0.05)) / (this.rules.boardSize - 1);
+        const boardSize = this.rules.boardSize;
+        const vp = this.viewport || { minX: 0, maxX: boardSize - 1, minY: 0, maxY: boardSize - 1, size: boardSize };
         const pad = this.canvasSize * 0.05;
+        const step = (this.canvasSize - 2 * pad) / (vp.size - 1);
         
-        const cx = pad + gridX * step;
-        const cy = pad + gridY * step;
-        
-        this.inkRipples.push({
-            cx,
-            cy,
-            radius: step * 0.1,
-            maxRadius: step * 1.6,
-            alpha: 0.6,
-            speed: step * 0.08,
-            color: isWarning ? '184, 59, 48' : '26, 30, 33'
-        });
+        // 只有落子点在视口内时，才在此处产生水墨波纹
+        if (gridX >= vp.minX && gridX <= vp.maxX && gridY >= vp.minY && gridY <= vp.maxY) {
+            const cx = pad + (gridX - vp.minX) * step;
+            const cy = pad + (gridY - vp.minY) * step;
+            
+            this.inkRipples.push({
+                cx,
+                cy,
+                radius: step * 0.1,
+                maxRadius: step * 1.6,
+                alpha: 0.6,
+                speed: step * 0.08,
+                color: isWarning ? '184, 59, 48' : '26, 30, 33'
+            });
+        }
     }
 
     /**
