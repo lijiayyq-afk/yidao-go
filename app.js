@@ -407,6 +407,22 @@ class GoApp {
                 if (e.key === 'Enter') executeJump();
             });
         }
+
+        // 绑定手机端快速选题抽屉展开与收起
+        const toggleBtn = document.getElementById('btn-toggle-drawer');
+        const drawer = document.getElementById('tsumego-drawer-content');
+        if (toggleBtn && drawer) {
+            toggleBtn.addEventListener('click', () => {
+                const isCollapsed = drawer.classList.contains('collapsed');
+                if (isCollapsed) {
+                    drawer.classList.remove('collapsed');
+                    toggleBtn.innerHTML = "收起选题 ▴";
+                } else {
+                    drawer.classList.add('collapsed');
+                    toggleBtn.innerHTML = "快速选题 ▾";
+                }
+            });
+        }
     }
 
     /**
@@ -878,6 +894,16 @@ class GoApp {
 
         this.updateTurnIndicator();
         this.drawBoard();
+
+        // 在移动端选题后自动折叠抽屉以保证一屏显示
+        if (window.innerWidth <= 768) {
+            const drawer = document.getElementById('tsumego-drawer-content');
+            const toggleBtn = document.getElementById('btn-toggle-drawer');
+            if (drawer && toggleBtn) {
+                drawer.classList.add('collapsed');
+                toggleBtn.innerHTML = "快速选题 ▾";
+            }
+        }
     }
 
     /**

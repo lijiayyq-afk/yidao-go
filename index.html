@@ -64,47 +64,51 @@
                     <h2>内置死活题挑战</h2>
                     <p class="section-desc">精选传统死活题，测试并锻炼您的“手筋”技巧。电脑将针对您的落子进行智能化应手。</p>
                     
-                    <!-- 水墨风进度展示条 -->
-                    <div class="tsumego-progress-container">
-                        <div class="progress-info">
-                            <span>闯关进度：<strong id="tsumego-progress-text">0/700 (0.0%)</strong></span>
+                    <!-- 当前题目展示看板（含手机端快速选题触发按钮） -->
+                    <div class="current-problem-card" id="current-problem-title-container">
+                        <span id="current-problem-title">当前挑战：加载中...</span>
+                        <button class="drawer-toggle-btn" id="btn-toggle-drawer">快速选题 ▾</button>
+                    </div>
+
+                    <!-- 选题抽屉容器 (手机端默认折叠，PC端常驻展开) -->
+                    <div class="tsumego-drawer-content collapsed" id="tsumego-drawer-content">
+                        <!-- 水墨风进度展示条 -->
+                        <div class="tsumego-progress-container">
+                            <div class="progress-info">
+                                <span>闯关进度：<strong id="tsumego-progress-text">0/700 (0.0%)</strong></span>
+                            </div>
+                            <div class="progress-track">
+                                <div class="progress-bar" id="tsumego-progress-bar" style="width: 0%;"></div>
+                            </div>
                         </div>
-                        <div class="progress-track">
-                            <div class="progress-bar" id="tsumego-progress-bar" style="width: 0%;"></div>
+
+                        <div class="problem-difficulty-tabs">
+                            <button class="diff-tab active" data-diff="easy">入门吃子</button>
+                            <button class="diff-tab" data-diff="medium">初级死活</button>
+                            <button class="diff-tab" data-diff="hard">手筋进阶</button>
                         </div>
-                    </div>
 
-                    <div class="problem-difficulty-tabs">
-                        <button class="diff-tab active" data-diff="easy">入门吃子</button>
-                        <button class="diff-tab" data-diff="medium">初级死活</button>
-                        <button class="diff-tab" data-diff="hard">手筋进阶</button>
-                    </div>
-
-                    <!-- 状态筛选与搜索跳转 -->
-                    <div class="tsumego-filter-bar">
-                        <div class="filter-buttons">
-                            <button class="filter-btn active" data-filter="all">全部</button>
-                            <button class="filter-btn" data-filter="unstarted">未做</button>
-                            <button class="filter-btn" data-filter="completed">已过</button>
+                        <!-- 状态筛选与搜索跳转 -->
+                        <div class="tsumego-filter-bar">
+                            <div class="filter-buttons">
+                                <button class="filter-btn active" data-filter="all">全部</button>
+                                <button class="filter-btn" data-filter="unstarted">未做</button>
+                                <button class="filter-btn" data-filter="completed">已过</button>
+                            </div>
+                            <div class="jump-box">
+                                <input type="number" id="tsumego-jump-input" min="1" placeholder="输入题号">
+                                <button id="tsumego-jump-btn">跳转</button>
+                            </div>
                         </div>
-                        <div class="jump-box">
-                            <input type="number" id="tsumego-jump-input" min="1" placeholder="输入题号">
-                            <button id="tsumego-jump-btn">跳转</button>
+
+                        <div class="problem-list" id="problem-list-container">
+                            <!-- 动态渲染题目项 -->
                         </div>
-                    </div>
 
-                    <!-- 当前题目展示看板 -->
-                    <div class="current-problem-card" id="current-problem-title">
-                        当前挑战：加载中...
-                    </div>
-
-                    <div class="problem-list" id="problem-list-container">
-                        <!-- 动态渲染题目项 -->
-                    </div>
-
-                    <!-- 分页导航器 -->
-                    <div class="tsumego-pagination-bar" id="tsumego-pagination">
-                        <!-- 动态渲染分页 -->
+                        <!-- 分页导航器 -->
+                        <div class="tsumego-pagination-bar" id="tsumego-pagination">
+                            <!-- 动态渲染分页 -->
+                        </div>
                     </div>
                 </div>
 

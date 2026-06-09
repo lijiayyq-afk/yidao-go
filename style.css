@@ -906,6 +906,17 @@ input:checked + .slider:before {
    响应式与自适应适配 (PC一屏限制 + 移动端自适应)
    ========================================================================== */
 
+/* 选题抽屉容器的基础样式与动画过渡 */
+.tsumego-drawer-content {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+    opacity: 1;
+    max-height: 1000px;
+    overflow: hidden;
+}
+
 /* PC 端一屏适配限制 */
 @media (min-width: 769px) {
     body {
@@ -980,6 +991,20 @@ input:checked + .slider:before {
         min-height: 90px;
         overflow-y: auto;
     }
+
+    .drawer-toggle-btn {
+        display: none !important; /* PC 端直接隐藏快速选题切换按钮 */
+    }
+    
+    .tsumego-drawer-content.collapsed {
+        max-height: 1000px !important;
+        opacity: 1 !important;
+        pointer-events: auto !important;
+        padding: inherit !important;
+        margin-bottom: inherit !important;
+        border: inherit !important;
+        gap: 12px !important;
+    }
 }
 
 /* 移动/手机端自适应排版 */
@@ -1036,6 +1061,45 @@ input:checked + .slider:before {
         gap: 12px;
     }
     
+    .current-problem-card {
+        display: flex !important;
+        justify-content: space-between;
+        align-items: center;
+        padding: 6px 12px;
+    }
+    
+    .drawer-toggle-btn {
+        background-color: var(--cinnabar);
+        color: #fff;
+        border: none;
+        padding: 4px 10px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background-color 0.2s;
+        box-shadow: 0 2px 4px rgba(184, 59, 48, 0.2);
+    }
+    
+    .drawer-toggle-btn:hover {
+        background-color: #9c2e25;
+    }
+    
+    .tsumego-drawer-content.collapsed {
+        max-height: 0px !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
+        margin-bottom: 0px !important;
+        padding: 0px !important;
+        border: none !important;
+        gap: 0px !important;
+    }
+    
+    /* 手机端折叠时隐藏多余的大字标题与段落，实现一屏幕全包 */
+    .sub-panel h2, .sub-panel .section-desc {
+        display: none !important;
+    }
+
     .tsumego-progress-container {
         padding: 8px 10px;
     }
